@@ -1,0 +1,79 @@
+# workflow for Terraform-destroy
+# set to manual trigger (workflow_dispatch) as on: delete has no knowledge of the branch name
+
+name: 'Terraform Destroy'
+
+on:
+  workflow_dispatch:
+
+# environment varilables and their default values to catch errors
+env:
+  TF_LOG: INFO
+  REGION: westus3
+  BRANCH: bbb
+  PREFIX: pp     # prefix for resource groups and tags
+
+jobs:
+
+  terraform-destroy:
+    name: 'Terraform Destroy'
+    runs-on: ubuntu-latest
+
+  # use bash shell all the time
+    defaults:
+      run:
+        shell: bash
+        working-directory: ./main
+    
+    steps:
+    
+    # checkout the repo
+    - name: 'Checkout'
+      uses: actions/checkout@v4
+
+    - name: 'Set env.BRANCH'
+      run: echo "BRANCH=$(echo $GITHUB_REF | cut -d'/' -f 3)" >> $GITHUB_ENV
+    
+    - name: 'Set env.PREFIX with first two letters of github repo owner name'
+      run: echo "PREFIX=$(echo $GITHUB_REPOSITORY_OWNER | cut -d'/' -f 1 | cut -c 1-2)" >> $GITHUB_ENV
+
+    # setup Terraform
+    - name: 'Setup Terraform'
+      uses: hashicorp/setup-terraform@v2
+      with:
+        terraform_version: "~>1.0"
+
+    # initialize Terraform
+    - name: 'Terraform Init'
+      id: init
+      env:
+        ARM_CLIENT_ID: ${{ secrets.ARM_CLIENT_ID }}
+        ARM_CLIENT_SECRET: ${{ secrets.ARM_CLIENT_SECRET }}
+        ARM_SUBSCRIPTION_ID: ${{ secrets.ARM_SUBSCRIPTION_ID }}
+        ARM_TENANT_ID: ${{ secrets.ARM_TENANT_ID }}
+        TFSTATE_RESOURCE_GROUP: ${{ secrets.TFSTATE_RESOURCE_GROUP }}
+        TFSTATE_STORAGE_ACCOUNT: ${{ secrets.TFSTATE_STORAGE_ACCOUNT }}
+        TFSTATE_CONTAINER_NAME: ${{ secrets.TFSTATE_CONTAINER_NAME }}
+      run: terraform init -backend-config="storage_account_name=$TFSTATE_STORAGE_ACCOUNT" -backend-config="container_name=$TFSTATE_CONTAINER_NAME" -backend-config="resource_group_name=$TFSTATE_RESOURCE_GROUP" -backend-config="key=$PREFIX-$BRANCH.terraform.tfstate" -no-color
+
+    # refresh state before destroy
+    - name: 'Terraform Refresh'
+      # if: github.event_name == 'delete'
+      id: refresh
+      env:
+        ARM_CLIENT_ID: ${{ secrets.ARM_CLIENT_ID }}
+        ARM_CLIENT_SECRET: ${{ secrets.ARM_CLIENT_SECRET }}
+        ARM_SUBSCRIPTION_ID: ${{ secrets.ARM_SUBSCRIPTION_ID }}
+        ARM_TENANT_ID: ${{ secrets.ARM_TENANT_ID }}
+      run: terraform refresh -no-color -var="BRANCH=${{ env.BRANCH }}" -var="PREFIX=${{ env.PREFIX }}"
+
+    # destroy Terraform configuration files
+    - name: 'Terraform Destroy'
+      # if: github.event_name == 'delete'
+      id: destroy
+      env:
+        ARM_CLIENT_ID: ${{ secrets.ARM_CLIENT_ID }}
+        ARM_CLIENT_SECRET: ${{ secrets.ARM_CLIENT_SECRET }}
+        ARM_SUBSCRIPTION_ID: ${{ secrets.ARM_SUBSCRIPTION_ID }}
+        ARM_TENANT_ID: ${{ secrets.ARM_TENANT_ID }}
+      run: terraform destroy -auto-approve -no-color -var="BRANCH=${{ env.BRANCH }}" -var="PREFIX=${{ env.PREFIX }}"

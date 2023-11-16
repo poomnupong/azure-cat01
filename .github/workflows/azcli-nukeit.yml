@@ -1,0 +1,44 @@
+# workflow for nuking resource groups when terraform destroy fails
+# set to manual trigger (workflow_dispatch)
+
+name: 'azcli-nukeit'
+
+on:
+  workflow_dispatch:
+
+# environment varilables and their default values to catch errors
+env:
+  TF_LOG: INFO
+  REGION: westus3
+  BRANCH: bbb
+  PREFIX: pp
+
+jobs:
+
+  terraform-destroy:
+    name: 'azcli-nukeit'
+    runs-on: ubuntu-latest
+
+  # use bash shell all the time
+    defaults:
+      run:
+        shell: bash
+        working-directory: ./main
+    
+    steps:
+    
+    - name: 'Checkout'
+      uses: actions/checkout@v4
+
+    - name: 'Set env.BRANCH'
+      run: echo "BRANCH=$(echo $GITHUB_REF | cut -d'/' -f 3)" >> $GITHUB_ENV
+
+    - name: 'Set env.PREFIX with first two letters of github repo owner name'
+      run: echo "PREFIX=$(echo $GITHUB_REPOSITORY_OWNER | cut -d'/' -f 1 | cut -c 1-2)" >> $GITHUB_ENV
+
+    - name: 'Login via az cli, then delete states and resource groups'
+      run: |
+        az login --service-principal --username="${{ secrets.ARM_CLIENT_ID }}" --password="${{ secrets.ARM_CLIENT_SECRET }}" --tenant="${{ secrets.ARM_TENANT_ID }}"
+        az account set --subscription ${{ secrets.ARM_SUBSCRIPTION_ID }}
+        az storage blob delete --auth-mode=login --account-name=${{ secrets.TFSTATE_STORAGE_ACCOUNT }} --container-name=${{ secrets.TFSTATE_CONTAINER_NAME }} --name=${{ env.PREFIX }}-${{ env.BRANCH }}.terraform.tfstate
+        az group list --subscription ${{ secrets.ARM_SUBSCRIPTION_ID }} --tag prefix=${{ env.PREFIX }} --tag branch=${{ env.BRANCH }} --query="[].name" --output tsv | xargs -P20 -I {} az group delete --yes --name {}
